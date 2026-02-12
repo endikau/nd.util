@@ -124,6 +124,7 @@ nd_page <- function(
       if(.load_wordcloud2){
         tags$script(src="assets/vendor/wordcloud2/js/wordcloud2.js")
       },
+      tags$script(src="assets/vendor/marked/js/marked.min.js")
     ),
     tags$body(
       lang="de", 
