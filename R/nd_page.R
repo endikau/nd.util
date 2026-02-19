@@ -59,7 +59,7 @@ nd_iframe_app <- function(.url, .width="100%", .height="400pt"){
     ),
     tags$script(
       stringi::stri_c(
-        "var domains = ['https://shiny.dsjlu.wirtschaft.uni-giessen.de'];\n",
+        "var domains = ['https://shiny.dsjlu.wirtschaft.uni-giessen.de','https://nd_apps.dsjlu.wirtschaft.uni-giessen.de'];\n",
         "iframeResize(\n",
         "  {waitForLoad: false, license: 'GPLv3', checkOrigin: domains}, \n",
         "  '#", .iframe_id, "'\n",
