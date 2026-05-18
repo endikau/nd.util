@@ -133,6 +133,10 @@ nd_page <- function(
         "app" ~ "background-color: var(--bs-body-bg);",
         .default=""
       ),
+      class=.page_type |> dplyr::case_match(
+        "app" ~ "py-0",
+        .default=""
+      ),
       .navbar,
       .main
     )
