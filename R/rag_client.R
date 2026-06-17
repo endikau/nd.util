@@ -12,6 +12,16 @@
 #' @param .citation_refine_template Citation refine prompt used for chat requests.
 #'
 #' @return An R6 RAG client.
+#'
+#' @details
+#' The returned client keeps a stable service URL, API key, session ID, and
+#' prompt set. Use `$export_store()` to download Qdrant points, including
+#' vectors by default, and `$import_store()` to restore an exported point set.
+#' Use `$export_chunks()` for parsed chunk text and `$export_documents()` for
+#' chunks grouped back into parsed documents. Passing `.tenant_id=NULL` exports
+#' the full collection; pass `.tenant_id=rag$session_id` to export only the
+#' current session.
+#'
 #' @importFrom R6 R6Class
 #' @importFrom curl curl_fetch_stream form_file handle_setheaders handle_setopt new_handle
 #' @importFrom httr2 request req_body_json req_body_multipart req_headers req_perform resp_body_json resp_body_string resp_status
@@ -248,6 +258,140 @@ RagClient <- R6::R6Class(
       lapply(names(.doc_table), function(.label){
         list(label=.label, count=as.integer(.doc_table[[.label]]))
       })
+
+    },
+
+    export_store=function(
+      .path=NULL,
+      .tenant_id=NULL,
+      .include_vectors=TRUE,
+      .pretty=TRUE
+    ){
+
+      .response <- private$base_req("/chat/export") |>
+        httr2::req_body_json(list(
+          tenant_id=.tenant_id,
+          include_vectors=.include_vectors
+        )) |>
+        httr2::req_perform()
+      private$check_response(.response, "Knowledge store export failed")
+
+      .store <- httr2::resp_body_json(.response, simplifyVector=FALSE)
+
+      if(!is.null(.path)){
+        jsonlite::write_json(
+          .store,
+          .path,
+          auto_unbox=TRUE,
+          null="null",
+          pretty=.pretty
+        )
+      }
+
+      .store
+
+    },
+
+    import_store=function(
+      .store=NULL,
+      .path=NULL,
+      .append=TRUE,
+      .distance="cosine"
+    ){
+
+      if(is.null(.store) && is.null(.path)){
+        stop("Provide either .store or .path.", call.=FALSE)
+      }
+      if(!is.null(.store) && !is.null(.path)){
+        stop("Provide only one of .store or .path.", call.=FALSE)
+      }
+
+      if(!is.null(.path)){
+        .store <- jsonlite::read_json(.path, simplifyVector=FALSE)
+      }
+
+      .points <- private$store_points(.store)
+      private$validate_import_points(.points, .distance)
+
+      .response <- private$base_req("/chat/import") |>
+        httr2::req_body_json(list(
+          points=.points,
+          append=.append,
+          distance=.distance
+        )) |>
+        httr2::req_perform()
+      private$check_response(.response, "Knowledge store import failed")
+
+      httr2::resp_body_json(.response, simplifyVector=FALSE)
+
+    },
+
+    export_chunks=function(
+      .path=NULL,
+      .tenant_id=NULL,
+      .include_metadata=TRUE,
+      .pretty=TRUE
+    ){
+
+      .response <- private$base_req("/chat/export/chunks") |>
+        httr2::req_body_json(list(
+          tenant_id=.tenant_id,
+          include_metadata=.include_metadata
+        )) |>
+        httr2::req_perform()
+      private$check_response(.response, "Parsed chunk export failed")
+
+      .chunks <- httr2::resp_body_json(.response, simplifyVector=FALSE)
+
+      if(!is.null(.path)){
+        jsonlite::write_json(
+          .chunks,
+          .path,
+          auto_unbox=TRUE,
+          null="null",
+          pretty=.pretty
+        )
+      }
+
+      .chunks
+
+    },
+
+    export_documents=function(
+      .path=NULL,
+      .tenant_id=NULL,
+      .include_metadata=TRUE,
+      .include_chunks=TRUE,
+      .collapse="\n\n",
+      .pretty=TRUE
+    ){
+
+      .chunk_export <- self$export_chunks(
+        .tenant_id=.tenant_id,
+        .include_metadata=.include_metadata
+      )
+      .documents <- private$chunks_to_documents(
+        .chunk_export$chunks %||% list(),
+        .include_chunks=.include_chunks,
+        .collapse=.collapse
+      )
+      .document_export <- list(
+        collection=.chunk_export$collection,
+        count=length(.documents),
+        documents=.documents
+      )
+
+      if(!is.null(.path)){
+        jsonlite::write_json(
+          .document_export,
+          .path,
+          auto_unbox=TRUE,
+          null="null",
+          pretty=.pretty
+        )
+      }
+
+      .document_export
 
     },
 
@@ -492,6 +636,134 @@ RagClient <- R6::R6Class(
       }
 
       .name
+
+    },
+
+    store_points=function(.store){
+
+      if(!is.null(.store$points)){
+        return(.store$points)
+      }
+      if(is.list(.store) && length(.store) > 0 && !is.null(.store[[1]]$id)){
+        return(.store)
+      }
+
+      stop("Store must be an export_store() result or a list of points.", call.=FALSE)
+
+    },
+
+    validate_import_points=function(.points, .distance){
+
+      if(!.distance %in% c("cosine", "euclid", "dot")){
+        stop(".distance must be one of 'cosine', 'euclid', or 'dot'.", call.=FALSE)
+      }
+      if(length(.points) == 0){
+        stop("No points found to import.", call.=FALSE)
+      }
+
+      .missing_vectors <- vapply(.points, function(.point){
+        is.null(.point$vector) || length(.point$vector) == 0
+      }, logical(1))
+      if(any(.missing_vectors)){
+        stop(
+          "Import requires vectors. Export the store with .include_vectors=TRUE.",
+          call.=FALSE
+        )
+      }
+
+      invisible(TRUE)
+
+    },
+
+    chunks_to_documents=function(.chunks, .include_chunks=TRUE, .collapse="\n\n"){
+
+      if(length(.chunks) == 0){
+        return(list())
+      }
+
+      .groups <- split(.chunks, vapply(.chunks, private$document_key, character(1)))
+      unname(lapply(.groups, function(.group){
+        .first <- .group[[1]]
+        .texts <- vapply(.group, function(.chunk){
+          private$safe_chr(.chunk$text)
+        }, character(1))
+
+        .document <- list(
+          tenant_id=.first$tenant_id,
+          source_label=.first$source_label,
+          source_file=.first$source_file,
+          chunk_count=length(.group),
+          chunk_ids=vapply(.group, function(.chunk){
+            private$safe_chr(.chunk$id)
+          }, character(1)),
+          page_numbers=private$chunk_pages(.group),
+          headings=private$chunk_headings(.group),
+          text=stringi::stri_c(.texts[nzchar(.texts)], collapse=.collapse)
+        )
+        if(isTRUE(.include_chunks)){
+          .document$chunks <- .group
+        }
+
+        .document
+      }))
+
+    },
+
+    document_key=function(.chunk){
+
+      stringi::stri_c(
+        private$safe_chr(.chunk$tenant_id),
+        private$safe_chr(.chunk$source_label),
+        private$safe_chr(.chunk$source_file),
+        sep="\r"
+      )
+
+    },
+
+    safe_chr=function(.x){
+
+      if(is.null(.x) || length(.x) == 0){
+        return("")
+      }
+
+      .value <- .x[[1]]
+      if(is.null(.value) || length(.value) == 0){
+        return("")
+      }
+      .value <- .value[[1]]
+      if(is.na(.value)){
+        return("")
+      }
+
+      as.character(.value)
+
+    },
+
+    chunk_pages=function(.chunks){
+
+      .pages <- unlist(lapply(.chunks, function(.chunk){
+        .chunk$page_numbers %||% list()
+      }), use.names=FALSE)
+      if(length(.pages) == 0){
+        return(NULL)
+      }
+
+      sort(unique(as.integer(.pages)))
+
+    },
+
+    chunk_headings=function(.chunks){
+
+      .headings <- unlist(lapply(.chunks, function(.chunk){
+        .chunk$headings %||% list()
+      }), use.names=FALSE)
+      .headings <- as.character(.headings)
+      .headings <- unique(.headings[!is.na(.headings) & nzchar(.headings)])
+      if(length(.headings) == 0){
+        return(NULL)
+      }
+
+      .headings
 
     },
 

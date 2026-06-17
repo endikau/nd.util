@@ -33,6 +33,15 @@ An R6 RAG client.
 \description{
 Create a RAG service client.
 }
+\details{
+The returned client keeps a stable service URL, API key, session ID, and
+prompt set. Use \code{$export_store()} to download Qdrant points, including
+vectors by default, and \code{$import_store()} to restore an exported point set.
+Use \code{$export_chunks()} for parsed chunk text and \code{$export_documents()}
+for chunks grouped back into parsed documents. Passing \code{.tenant_id = NULL}
+exports the full collection; pass \code{.tenant_id = rag$session_id} to export
+only the current session.
+}
 \examples{
 NULL
 }
