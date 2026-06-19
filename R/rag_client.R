@@ -15,12 +15,15 @@
 #'
 #' @details
 #' The returned client keeps a stable service URL, API key, session ID, and
-#' prompt set. Use `$export_store()` to download Qdrant points, including
-#' vectors by default, and `$import_store()` to restore an exported point set.
+#' prompt set. Use `$ingest_url()`/`$ingest_pdf()` for blocking interactive
+#' ingest, or `$ingest_url_async()`/`$ingest_pdf_async()` with `$wait_ingest()`
+#' when polling manually. Use `$export_store()` to download Qdrant points,
+#' including vectors by default, and `$import_store()` to restore an exported
+#' point set.
 #' Use `$export_chunks()` for parsed chunk text and `$export_documents()` for
-#' chunks grouped back into parsed documents. Passing `.tenant_id=NULL` exports
-#' the full collection; pass `.tenant_id=rag$session_id` to export only the
-#' current session.
+#' chunks grouped back into parsed documents. All export and import operations
+#' are restricted to the client's active session. Imported point and metadata
+#' tenant IDs are replaced by the active session ID.
 #'
 #' @importFrom R6 R6Class
 #' @importFrom curl curl_fetch_stream form_file handle_setheaders handle_setopt new_handle
@@ -190,6 +193,22 @@ RagClient <- R6::R6Class(
 
     },
 
+    ingest_url=function(
+      .url,
+      .label=NULL,
+      .timeout_s=1200,
+      .interval_s=1
+    ){
+
+      .job_id <- self$ingest_url_async(.url, .label=.label)
+      self$wait_ingest(
+        .job_id,
+        .timeout_s=.timeout_s,
+        .interval_s=.interval_s
+      )
+
+    },
+
     ingest_html_async=function(.html, .name="page.html", .label=NULL){
 
       .payload <- list(
@@ -209,6 +228,27 @@ RagClient <- R6::R6Class(
 
     },
 
+    ingest_pdf=function(
+      .pdf_paths,
+      .label=NULL,
+      .filenames=NULL,
+      .timeout_s=1200,
+      .interval_s=1
+    ){
+
+      .job_id <- self$ingest_pdf_async(
+        .pdf_paths,
+        .label=.label,
+        .filenames=.filenames
+      )
+      self$wait_ingest(
+        .job_id,
+        .timeout_s=.timeout_s,
+        .interval_s=.interval_s
+      )
+
+    },
+
     poll_ingest=function(.job_id){
 
       .response <- private$base_req(stringi::stri_c("/ingest/status/", .job_id)) |>
@@ -216,6 +256,35 @@ RagClient <- R6::R6Class(
       private$check_response(.response, "Status failed")
 
       httr2::resp_body_json(.response)
+
+    },
+
+    wait_ingest=function(
+      .job_id,
+      .timeout_s=1200,
+      .interval_s=1
+    ){
+
+      .started_at <- Sys.time()
+      repeat {
+        .status <- self$poll_ingest(.job_id)
+        if(.status$status %in% c("succeeded", "failed")){
+          if(identical(.status$status, "failed")){
+            stop(
+              "Ingest failed: ",
+              .status$error %||% .status$message %||% "unknown error",
+              call.=FALSE
+            )
+          }
+          return(.status)
+        }
+
+        .elapsed_s <- as.numeric(difftime(Sys.time(), .started_at, units="secs"))
+        if(.elapsed_s >= .timeout_s){
+          stop("Timed out waiting for ingest job: ", .job_id, call.=FALSE)
+        }
+        Sys.sleep(.interval_s)
+      }
 
     },
 
@@ -233,7 +302,7 @@ RagClient <- R6::R6Class(
     list_documents=function(){
 
       .response <- private$base_req("/chat/export") |>
-        httr2::req_body_json(list(tenant_id=self$session_id, include_vectors=FALSE)) |>
+        httr2::req_body_json(list(include_vectors=FALSE)) |>
         httr2::req_perform()
       private$check_response(.response, "Dokumentenliste fehlgeschlagen")
 
@@ -263,14 +332,12 @@ RagClient <- R6::R6Class(
 
     export_store=function(
       .path=NULL,
-      .tenant_id=NULL,
       .include_vectors=TRUE,
       .pretty=TRUE
     ){
 
       .response <- private$base_req("/chat/export") |>
         httr2::req_body_json(list(
-          tenant_id=.tenant_id,
           include_vectors=.include_vectors
         )) |>
         httr2::req_perform()
@@ -328,14 +395,12 @@ RagClient <- R6::R6Class(
 
     export_chunks=function(
       .path=NULL,
-      .tenant_id=NULL,
       .include_metadata=TRUE,
       .pretty=TRUE
     ){
 
       .response <- private$base_req("/chat/export/chunks") |>
         httr2::req_body_json(list(
-          tenant_id=.tenant_id,
           include_metadata=.include_metadata
         )) |>
         httr2::req_perform()
@@ -359,7 +424,6 @@ RagClient <- R6::R6Class(
 
     export_documents=function(
       .path=NULL,
-      .tenant_id=NULL,
       .include_metadata=TRUE,
       .include_chunks=TRUE,
       .collapse="\n\n",
@@ -367,7 +431,6 @@ RagClient <- R6::R6Class(
     ){
 
       .chunk_export <- self$export_chunks(
-        .tenant_id=.tenant_id,
         .include_metadata=.include_metadata
       )
       .documents <- private$chunks_to_documents(
