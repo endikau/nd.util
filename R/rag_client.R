@@ -25,8 +25,9 @@
 #' chunks grouped back into parsed documents. All export and import operations
 #' are restricted to the client's active session. Imported point and metadata
 #' tenant IDs are replaced by the active session ID. Set `.include_trace=TRUE`
-#' to receive retrieval results, scores, prompts, execution stages, and timings.
-#' This trace does not expose hidden model chain-of-thought.
+#' to receive query rewrites, retrieval results, filter decisions, scores,
+#' effective prompts, citation validation, execution stages, and timings. This
+#' trace does not expose hidden model chain-of-thought.
 #'
 #' @importFrom R6 R6Class
 #' @importFrom curl curl_fetch_stream form_file handle_setheaders handle_setopt new_handle

@@ -46,9 +46,9 @@ Use \code{$export_chunks()} for parsed chunk text and \code{$export_documents()}
 for chunks grouped back into parsed documents. All export and import operations
 are restricted to the client's active session. Imported point and metadata
 tenant IDs are replaced by the active session ID. Set
-\code{.include_trace = TRUE} to receive retrieval results, scores, prompts,
-execution stages, and timings. This trace does not expose hidden model
-chain-of-thought.
+\code{.include_trace = TRUE} to receive query rewrites, retrieval results,
+filter decisions, scores, effective prompts, citation validation, execution
+stages, and timings. This trace does not expose hidden model chain-of-thought.
 }
 \examples{
 NULL
