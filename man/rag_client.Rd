@@ -6,6 +6,7 @@ rag_client(
   .base_url = rag_default_service_url(),
   .api_key = Sys.getenv("RAG_SERVICE_API_KEY", unset = ""),
   .session_id = NULL,
+  .include_trace = FALSE,
   .system_prompt = rag_default_prompts()$system_prompt,
   .condense_prompt = rag_default_prompts()$condense_prompt,
   .context_prompt = rag_default_prompts()$context_prompt,
@@ -19,6 +20,7 @@ rag_client(
 \item{.base_url}{RAG service base URL.}
 \item{.api_key}{RAG service API key.}
 \item{.session_id}{Stable RAG session ID. Generated when \code{NULL}.}
+\item{.include_trace}{Include structured RAG execution traces by default.}
 \item{.system_prompt}{System prompt used for chat requests.}
 \item{.condense_prompt}{Condense prompt used for chat requests.}
 \item{.context_prompt}{Context prompt used for chat requests.}
@@ -43,7 +45,10 @@ to restore an exported point set.
 Use \code{$export_chunks()} for parsed chunk text and \code{$export_documents()}
 for chunks grouped back into parsed documents. All export and import operations
 are restricted to the client's active session. Imported point and metadata
-tenant IDs are replaced by the active session ID.
+tenant IDs are replaced by the active session ID. Set
+\code{.include_trace = TRUE} to receive retrieval results, scores, prompts,
+execution stages, and timings. This trace does not expose hidden model
+chain-of-thought.
 }
 \examples{
 NULL

@@ -3,6 +3,7 @@
 #' @param .base_url RAG service base URL.
 #' @param .api_key RAG service API key.
 #' @param .session_id Stable RAG session ID. Generated when `NULL`.
+#' @param .include_trace Include structured RAG execution traces by default.
 #' @param .system_prompt System prompt used for chat requests.
 #' @param .condense_prompt Condense prompt used for chat requests.
 #' @param .context_prompt Context prompt used for chat requests.
@@ -23,7 +24,9 @@
 #' Use `$export_chunks()` for parsed chunk text and `$export_documents()` for
 #' chunks grouped back into parsed documents. All export and import operations
 #' are restricted to the client's active session. Imported point and metadata
-#' tenant IDs are replaced by the active session ID.
+#' tenant IDs are replaced by the active session ID. Set `.include_trace=TRUE`
+#' to receive retrieval results, scores, prompts, execution stages, and timings.
+#' This trace does not expose hidden model chain-of-thought.
 #'
 #' @importFrom R6 R6Class
 #' @importFrom curl curl_fetch_stream form_file handle_setheaders handle_setopt new_handle
@@ -37,6 +40,7 @@ rag_client <- function(
   .base_url=rag_default_service_url(),
   .api_key=Sys.getenv("RAG_SERVICE_API_KEY", unset=""),
   .session_id=NULL,
+  .include_trace=FALSE,
   .system_prompt=rag_default_prompts()$system_prompt,
   .condense_prompt=rag_default_prompts()$condense_prompt,
   .context_prompt=rag_default_prompts()$context_prompt,
@@ -50,6 +54,7 @@ rag_client <- function(
     .base_url=.base_url,
     .api_key=.api_key,
     .session_id=.session_id,
+    .include_trace=.include_trace,
     .system_prompt=.system_prompt,
     .condense_prompt=.condense_prompt,
     .context_prompt=.context_prompt,
@@ -102,6 +107,7 @@ RagClient <- R6::R6Class(
     base_url=NULL,
     api_key=NULL,
     session_id=NULL,
+    include_trace=FALSE,
     system_prompt=NULL,
     condense_prompt=NULL,
     context_prompt=NULL,
@@ -114,6 +120,7 @@ RagClient <- R6::R6Class(
       .base_url=rag_default_service_url(),
       .api_key=Sys.getenv("RAG_SERVICE_API_KEY", unset=""),
       .session_id=NULL,
+      .include_trace=FALSE,
       .system_prompt=rag_default_prompts()$system_prompt,
       .condense_prompt=rag_default_prompts()$condense_prompt,
       .context_prompt=rag_default_prompts()$context_prompt,
@@ -126,6 +133,7 @@ RagClient <- R6::R6Class(
       self$base_url <- sub("/+$", "", .base_url)
       self$api_key <- .api_key
       self$session_id <- rag_coalesce(.session_id, private$new_session_id())
+      self$include_trace <- .include_trace
       self$system_prompt <- .system_prompt
       self$condense_prompt <- .condense_prompt
       self$context_prompt <- .context_prompt
@@ -479,6 +487,7 @@ RagClient <- R6::R6Class(
     chat_stream=function(
       .message,
       .history=list(),
+      .include_trace=NULL,
       .system_prompt=NULL,
       .condense_prompt=NULL,
       .context_prompt=NULL,
@@ -493,6 +502,7 @@ RagClient <- R6::R6Class(
         private$chat_payload(
           .message=.message,
           .history=.history,
+          .include_trace=.include_trace,
           .system_prompt=.system_prompt,
           .condense_prompt=.condense_prompt,
           .context_prompt=.context_prompt,
@@ -516,6 +526,8 @@ RagClient <- R6::R6Class(
       .accumulator <- raw(0)
       .answer <- ""
       .sources <- NULL
+      .prompts <- NULL
+      .trace <- NULL
 
       .handle <- curl::new_handle()
       curl::handle_setheaders(.handle, .list=.headers)
@@ -541,11 +553,15 @@ RagClient <- R6::R6Class(
           }
         } else if(!is.null(.chunk$type) && .chunk$type == "sources"){
           .sources <<- rag_source_list(.chunk$sources)
+        } else if(!is.null(.chunk$type) && .chunk$type == "trace"){
+          .trace <<- .chunk$trace
         } else if(!is.null(.chunk$type) && .chunk$type == "done"){
           if(!is.null(.chunk$answer)){
             .answer <<- .chunk$answer
           }
           .sources <<- rag_source_list(.chunk$sources)
+          .prompts <<- .chunk$prompts
+          .trace <<- .chunk$trace %||% .trace
         } else if(!is.null(.chunk$type) && .chunk$type == "error"){
           stop("Stream error: ", .chunk$error, call.=FALSE)
         }
@@ -577,7 +593,12 @@ RagClient <- R6::R6Class(
         .process_line(rawToChar(.accumulator))
       }
 
-      list(answer=.answer, sources=rag_source_list(.sources))
+      list(
+        answer=.answer,
+        sources=rag_source_list(.sources),
+        prompts=.prompts,
+        trace=.trace
+      )
 
     },
 
@@ -585,6 +606,7 @@ RagClient <- R6::R6Class(
       .message,
       .history=list(),
       .include_api_key=TRUE,
+      .include_trace=NULL,
       .system_prompt=NULL,
       .condense_prompt=NULL,
       .context_prompt=NULL,
@@ -603,6 +625,7 @@ RagClient <- R6::R6Class(
         private$chat_payload(
           .message=.message,
           .history=.history,
+          .include_trace=.include_trace,
           .system_prompt=.system_prompt,
           .condense_prompt=.condense_prompt,
           .context_prompt=.context_prompt,
@@ -833,6 +856,7 @@ RagClient <- R6::R6Class(
     chat_payload=function(
       .message,
       .history=list(),
+      .include_trace=NULL,
       .system_prompt=NULL,
       .condense_prompt=NULL,
       .context_prompt=NULL,
@@ -845,6 +869,7 @@ RagClient <- R6::R6Class(
       list(
         message=.message,
         history=.history,
+        include_trace=rag_coalesce(.include_trace, self$include_trace),
         system_prompt=rag_coalesce(.system_prompt, self$system_prompt),
         condense_prompt=rag_coalesce(.condense_prompt, self$condense_prompt),
         context_prompt=rag_coalesce(.context_prompt, self$context_prompt),
