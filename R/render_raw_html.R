@@ -9,8 +9,9 @@
 #' NULL
 render_raw_html <- function(.html) {
   .html |>
-    purrr::map_chr(as.character) |>
-    stringi::stri_c(collapse = "\n") |>
+    purrr::modify_if(is.character, htmltools::HTML)
+    htmltools::renderTags(indent = FALSE) |> 
+    purrr::chuck("html") |> 
     (\(.str) {
       stringi::stri_c(
         "{{{< raw_html >}}}",
