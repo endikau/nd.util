@@ -9,14 +9,14 @@
 #' NULL
 render_raw_html <- function(.html) {
   .html |>
-    purrr::modify_if(is.character, htmltools::HTML)
-    htmltools::renderTags(indent = FALSE) |> 
-    purrr::chuck("html") |> 
-    (\(.str) {
+    (\(..x) if (is.character(..x)) htmltools::HTML(..x) else ..x)() |>
+    htmltools::renderTags(indent = FALSE) |>
+    purrr::chuck("html") |>
+    (\(..x) {
       stringi::stri_c(
         "{{{< raw_html >}}}",
         "```{=html}",
-        .str,
+        ..x,
         "```",
         "{{{< /raw_html >}}}",
         sep = "\n"
