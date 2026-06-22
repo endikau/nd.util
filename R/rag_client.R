@@ -210,10 +210,18 @@ RagClient <- R6::R6Class(
 
     ingest_url_async=function(.url, .name=NULL, .label=NULL){
 
+      if(length(.url) != 1 || is.na(.url) || !nzchar(trimws(.url))){
+        stop(".url must contain one non-empty URL.", call.=FALSE)
+      }
+      .name <- private$ingest_values(
+        .name,
+        private$url_filename(.url),
+        ".name"
+      )[[1]]
       .html <- self$clean_html(.url)
       self$ingest_html_async(
         .html=.html,
-        .name=rag_coalesce(.name, private$url_filename(.url)),
+        .name=.name,
         .label=.label
       )
 
