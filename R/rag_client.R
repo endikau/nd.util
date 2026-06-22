@@ -16,9 +16,12 @@
 #'
 #' @details
 #' The returned client keeps a stable service URL, API key, session ID, and
-#' prompt set. Use `$ingest_url()`/`$ingest_pdf()` for blocking interactive
-#' ingest, or `$ingest_url_async()`/`$ingest_pdf_async()` with `$wait_ingest()`
-#' when polling manually. Use `$export_store()` to download Qdrant points,
+#' prompt set. Use `$ingest_pdf()`, `$ingest_url()`, or `$ingest_html()` for
+#' blocking interactive ingest. Their `_async()` counterparts return a job ID
+#' for use with `$poll_ingest()` or `$wait_ingest()`. Every ingest method accepts
+#' `.name` for the document name stored as `source_file` and `.label` for an
+#' optional grouping label stored as `source_label`. Use `$export_store()` to
+#' download Qdrant points,
 #' including vectors by default, and `$import_store()` to restore an exported
 #' point set.
 #' Use `$export_chunks()` for parsed chunk text and `$export_documents()` for
@@ -160,29 +163,43 @@ RagClient <- R6::R6Class(
 
     },
 
-    ingest_pdf_async=function(.pdf_paths, .label=NULL, .filenames=NULL){
+    ingest_pdf_async=function(
+      .pdf_paths,
+      .name=NULL,
+      .label=NULL
+    ){
 
       stopifnot(length(.pdf_paths) > 0)
+      .names <- private$ingest_values(
+        .name,
+        basename(.pdf_paths),
+        ".name"
+      )
+      .labels <- if(is.null(.label)){
+        NULL
+      } else {
+        private$ingest_values(.label, .names, ".label")
+      }
 
       .parts <- vector("list", length(.pdf_paths))
       names(.parts) <- rep("files", length(.pdf_paths))
       for(.pdf_id in seq_along(.pdf_paths)){
-        .filename <- if(!is.null(.filenames) && length(.filenames) >= .pdf_id){
-          .filenames[[.pdf_id]]
-        } else {
-          basename(.pdf_paths[[.pdf_id]])
-        }
         .parts[[.pdf_id]] <- curl::form_file(
           .pdf_paths[[.pdf_id]],
           type="application/pdf",
-          name=.filename
+          name=basename(.pdf_paths[[.pdf_id]])
         )
       }
-      if(!is.null(.label) && nzchar(.label)){
-        .parts[["labels"]] <- .label
+      .name_parts <- as.list(.names)
+      names(.name_parts) <- rep("names", length(.name_parts))
+      .parts <- c(.parts, .name_parts)
+      if(!is.null(.labels)){
+        .label_parts <- as.list(.labels)
+        names(.label_parts) <- rep("labels", length(.label_parts))
+        .parts <- c(.parts, .label_parts)
       }
 
-      .response <- private$base_req("/ingest/async") |>
+      .response <- private$base_req("/ingest/pdf/async") |>
         httr2::req_body_multipart(!!!.parts) |>
         httr2::req_perform()
       private$check_response(.response, "Ingest start failed")
@@ -191,12 +208,12 @@ RagClient <- R6::R6Class(
 
     },
 
-    ingest_url_async=function(.url, .label=NULL){
+    ingest_url_async=function(.url, .name=NULL, .label=NULL){
 
       .html <- self$clean_html(.url)
       self$ingest_html_async(
         .html=.html,
-        .name=private$url_filename(.url),
+        .name=rag_coalesce(.name, private$url_filename(.url)),
         .label=.label
       )
 
@@ -204,12 +221,17 @@ RagClient <- R6::R6Class(
 
     ingest_url=function(
       .url,
+      .name=NULL,
       .label=NULL,
       .timeout_s=1200,
       .interval_s=1
     ){
 
-      .job_id <- self$ingest_url_async(.url, .label=.label)
+      .job_id <- self$ingest_url_async(
+        .url,
+        .name=.name,
+        .label=.label
+      )
       self$wait_ingest(
         .job_id,
         .timeout_s=.timeout_s,
@@ -218,37 +240,68 @@ RagClient <- R6::R6Class(
 
     },
 
-    ingest_html_async=function(.html, .name="page.html", .label=NULL){
+    ingest_html_async=function(.html, .name=NULL, .label=NULL){
+
+      if(length(.html) != 1 || is.na(.html) || !nzchar(trimws(.html))){
+        stop(".html must contain one non-empty HTML document.", call.=FALSE)
+      }
+      .name <- private$ingest_values(.name, "page.html", ".name")[[1]]
+      .label <- if(is.null(.label)){
+        NULL
+      } else {
+        private$ingest_values(.label, .name, ".label")[[1]]
+      }
 
       .payload <- list(
         docs=list(list(
           name=.name,
           content=.html,
-          label=if(!is.null(.label) && nzchar(.label)) .label else .name
+          label=.label
         ))
       )
 
-      .response <- private$base_req("/ingest/urls/async") |>
+      .response <- private$base_req("/ingest/html/async") |>
         httr2::req_body_json(.payload) |>
         httr2::req_perform()
-      private$check_response(.response, "URL ingest start failed")
+      private$check_response(.response, "HTML ingest start failed")
 
       httr2::resp_body_json(.response)$job_id %||% stop("No job_id returned", call.=FALSE)
 
     },
 
+    ingest_html=function(
+      .html,
+      .name=NULL,
+      .label=NULL,
+      .timeout_s=1200,
+      .interval_s=1
+    ){
+
+      .job_id <- self$ingest_html_async(
+        .html,
+        .name=.name,
+        .label=.label
+      )
+      self$wait_ingest(
+        .job_id,
+        .timeout_s=.timeout_s,
+        .interval_s=.interval_s
+      )
+
+    },
+
     ingest_pdf=function(
       .pdf_paths,
+      .name=NULL,
       .label=NULL,
-      .filenames=NULL,
       .timeout_s=1200,
       .interval_s=1
     ){
 
       .job_id <- self$ingest_pdf_async(
         .pdf_paths,
-        .label=.label,
-        .filenames=.filenames
+        .name=.name,
+        .label=.label
       )
       self$wait_ingest(
         .job_id,
@@ -642,6 +695,31 @@ RagClient <- R6::R6Class(
     }
   ),
   private=list(
+    ingest_values=function(.values, .defaults, .argument){
+
+      .defaults <- as.character(.defaults)
+      if(is.null(.values)){
+        return(.defaults)
+      }
+
+      .values <- as.character(.values)
+      if(length(.values) == 1 && length(.defaults) > 1){
+        .values <- rep(.values, length(.defaults))
+      }
+      if(length(.values) != length(.defaults)){
+        stop(
+          .argument,
+          " must contain either one value or one value per document.",
+          call.=FALSE
+        )
+      }
+
+      .missing <- is.na(.values) | !nzchar(trimws(.values))
+      .values[.missing] <- .defaults[.missing]
+      trimws(.values)
+
+    },
+
     new_session_id=function(){
 
       stringi::stri_c(
