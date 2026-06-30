@@ -13,6 +13,9 @@ nd_popover(..., .title = "Mehr Informationen", .id = NULL)
 
 \item{.id}{...}
 }
+\value{
+...
+}
 \description{
 nd_popover
 }
