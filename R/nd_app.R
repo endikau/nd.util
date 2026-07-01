@@ -80,6 +80,19 @@ nd_app <- function(
       # iframe-resizer als CHILD (App läuft eingebettet im iframe).
       tags$script(src = "assets/vendor/iframe-resizer/js/iframe-resizer.child.js"),
 
+      # Keep-alive: Hält die Shiny-WebSocket-Verbindung aktiv, damit ein
+      # vorgelagerter Reverse-Proxy sie bei Inaktivität nicht als idle
+      # schließt ("Disconnected from the server"). Läuft im iframe der App;
+      # beendet sich damit automatisch, sobald der/die Nutzer:in wegnavigiert
+      # oder den Tab schließt (iframe wird abgebaut) – die Session wird dann
+      # regulär inaktiv.
+      tags$script(htmltools::HTML(stringi::stri_c(
+        "(function(){setInterval(function(){",
+        "if(window.Shiny&&Shiny.setInputValue){",
+        "Shiny.setInputValue('.clientKeepAlive',Date.now(),{priority:'event'});",
+        "}},30000);})();"
+      ))),
+
       # App-spezifische Ergänzungen.
       .head
     ),
